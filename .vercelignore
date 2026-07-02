@@ -1,0 +1,18 @@
+# Windows Prisma query engine – Vercel runs Linux (rhel-openssl-3.0.x)
+src/server/db/client/query_engine-windows.dll.node
+src/server/db/client/query_engine-windows.dll.node.tmp*
+
+# Prisma WASM / edge engines – serverless functions use the native Linux engine
+src/server/db/client/query_engine_bg.wasm
+src/server/db/client/query_engine_bg.js
+src/server/db/client/wasm-edge-light-loader.mjs
+src/server/db/client/wasm-worker-loader.mjs
+src/server/db/client/wasm.js
+
+# User-uploaded assets – serve from object storage, not the deployment bundle
+public/uploads/
+
+# Development / tooling artefacts that don't belong in production
+pnpm-lock.yaml
+test-mail.js
+test.txt

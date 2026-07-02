@@ -1,0 +1,1038 @@
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../src/server/db/client"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                           String                        @id
+  name                         String
+  email                        String                        @unique
+  emailVerified                Boolean                       @default(false)
+  image                        String?
+  role                         UserRole                      @default(USER)
+  createdAt                    DateTime                      @default(now())
+  updatedAt                    DateTime                      @updatedAt
+  reviewDepth                  String                        @default("standard")
+  defaultLanguage              String                        @default("auto")
+  autoReview                   Boolean                       @default(false)
+  includeSecurityChecks        Boolean                       @default(true)
+  includePerfSuggestions       Boolean                       @default(true)
+  preferredModel               String                        @default("openai/gpt-4o")
+  banned                       Boolean                       @default(false)
+  bannedReason                 String?
+  desktopNotifications         Boolean                       @default(true)
+  emailNotifications           Boolean                       @default(true)
+  notificationSoundEnabled     Boolean                       @default(false)
+  notifyReviewApproved         Boolean                       @default(true)
+  notifyReviewAssigned         Boolean                       @default(true)
+  notifyReviewChangesRequested Boolean                       @default(true)
+  notifyReviewCompleted        Boolean                       @default(true)
+  notifyReviewFailed           Boolean                       @default(true)
+  notifyScheduledScanCompleted Boolean                       @default(false)
+  notifyTeamInvites            Boolean                       @default(true)
+  notifyTeamMemberAdded        Boolean                       @default(true)
+  planId                       String                        @default("free")
+  planExpiresAt                DateTime?
+  planStartedAt                DateTime?
+  billingCycle                 String? /// "monthly" | "yearly"
+  pendingPlanId                String? /// scheduled plan applied at period end ("free" = cancel)
+  pendingBillingCycle          String? /// "monthly" | "yearly" for a scheduled paid downgrade
+  accountCredit                Int                           @default(0) /// Non-withdrawable credit in cents for future payments
+  overrideReposLimit           Int?
+  overrideReviewsLimit         Int?
+  overrideSeatsLimit           Int?
+  notifications                Notification[]
+  repositories                 Repository[]
+  reviews                      Review[]
+  reviewFeedbacks              ReviewFeedback[]
+  threadComments               ReviewThreadComment[]
+  teamMembers                  TeamMember[]
+  accounts                     Account[]
+  auditLogs                    AuditLog[]
+  reviewApprovals              ReviewApproval[]
+  assignedByMe                 ReviewAssignment[]            @relation("ReviewAssigner")
+  assignedReviews              ReviewAssignment[]            @relation("ReviewAssignee")
+  reviewRules                  ReviewRule[]
+  commentReactions             ReviewThreadCommentReaction[]
+  sessions                     Session[]
+  customRoles                  UserCustomRole[]
+  billingInfo                  BillingInfo?
+  invoices                     Invoice[]
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+model Repository {
+  id                   String                           @id @default(cuid())
+  userId               String
+  teamId               String?
+  githubId             Int
+  name                 String
+  fullName             String
+  private              Boolean                          @default(false)
+  htmlUrl              String
+  createdAt            DateTime                         @default(now())
+  updatedAt            DateTime                         @updatedAt
+  diagrams             Diagram[]
+  team                 Team?                            @relation(fields: [teamId], references: [id])
+  user                 User                             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviews              Review[]
+  branchProtectionRecs BranchProtectionRecommendation[]
+  githubComments       GitHubComment[]
+  reviewRules          ReviewRule[]
+  scheduledScanConfig  ScheduledScanConfig?
+  webhookConfig        WebhookConfig?
+
+  @@unique([userId, githubId])
+  @@index([teamId])
+}
+
+model Review {
+  id                String             @id @default(cuid())
+  repositoryId      String
+  userId            String
+  prNumber          Int
+  prTitle           String
+  prUrl             String
+  status            ReviewStatus       @default(PENDING)
+  summary           String?
+  riskScore         Int?
+  comments          Json?
+  qualityMetrics    Json?
+  error             String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  parentReviewId    String?
+  resolvedComments  String[]           @default([])
+  parentReview      Review?            @relation("ReviewChain", fields: [parentReviewId], references: [id])
+  childReviews      Review[]           @relation("ReviewChain")
+  repository        Repository         @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feedbacks         ReviewFeedback[]
+  threads           ReviewThread[]
+  githubComment     GitHubComment?
+  githubStatusCheck GitHubStatusCheck?
+  approvals         ReviewApproval[]
+  assignments       ReviewAssignment[]
+  securityIssues    SecurityIssue[]
+
+  @@index([repositoryId])
+  @@index([userId])
+  @@index([status])
+  @@index([parentReviewId])
+}
+
+model ReviewFeedback {
+  id        String   @id @default(cuid())
+  reviewId  String
+  userId    String
+  rating    Int
+  comment   String?
+  createdAt DateTime @default(now())
+  review    Review   @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewId, userId])
+  @@index([reviewId])
+  @@index([userId])
+}
+
+model SecurityIssue {
+  id             String            @id @default(cuid())
+  reviewId       String
+  severity       SecuritySeverity
+  type           SecurityIssueType @default(CODE_QUALITY)
+  cveId          String?
+  cweId          String?
+  packageName    String?
+  packageVersion String?
+  title          String
+  description    String
+  remediation    String
+  affectedLines  Json
+  falsePositive  Boolean           @default(false)
+  resolved       Boolean           @default(false)
+  resolvedAt     DateTime?
+  resolvedBy     String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  review         Review            @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId])
+  @@index([reviewId, severity])
+  @@index([severity, resolved])
+  @@index([cveId])
+  @@map("security_issue")
+}
+
+model ReviewThread {
+  id        String                @id @default(cuid())
+  reviewId  String
+  file      String
+  line      Int
+  resolved  Boolean               @default(false)
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+  review    Review                @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  comments  ReviewThreadComment[]
+
+  @@index([reviewId])
+}
+
+model ReviewThreadComment {
+  id        String                        @id @default(cuid())
+  threadId  String
+  userId    String
+  content   String
+  createdAt DateTime                      @default(now())
+  updatedAt DateTime                      @updatedAt
+  thread    ReviewThread                  @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  user      User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reactions ReviewThreadCommentReaction[]
+
+  @@index([threadId])
+  @@index([userId])
+}
+
+model ReviewThreadCommentReaction {
+  id        String              @id @default(cuid())
+  commentId String
+  userId    String
+  emoji     String              @db.VarChar(10)
+  createdAt DateTime            @default(now())
+  comment   ReviewThreadComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId, emoji])
+  @@index([commentId])
+  @@map("review_thread_comment_reaction")
+}
+
+model ReviewApproval {
+  id        String              @id @default(cuid())
+  reviewId  String
+  userId    String
+  state     ReviewApprovalState
+  body      String?
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+  review    Review              @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewId, userId])
+  @@index([reviewId])
+  @@index([userId])
+  @@map("review_approval")
+}
+
+model ReviewAssignment {
+  id         String             @id @default(cuid())
+  reviewId   String
+  assigneeId String
+  assignedBy String
+  dueDate    DateTime?
+  priority   AssignmentPriority @default(MEDIUM)
+  status     AssignmentStatus   @default(PENDING)
+  note       String?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+  assigner   User               @relation("ReviewAssigner", fields: [assignedBy], references: [id], onDelete: Cascade)
+  assignee   User               @relation("ReviewAssignee", fields: [assigneeId], references: [id], onDelete: Cascade)
+  review     Review             @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewId, assigneeId])
+  @@index([reviewId])
+  @@index([assigneeId])
+  @@map("review_assignment")
+}
+
+model Team {
+  id           String       @id @default(cuid())
+  name         String
+  slug         String       @unique
+  image        String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  repositories Repository[]
+  actions      TeamAction[]
+  members      TeamMember[]
+  reviewRules  ReviewRule[]
+}
+
+model TeamMember {
+  id        String   @id @default(cuid())
+  teamId    String
+  userId    String
+  role      TeamRole @default(MEMBER)
+  createdAt DateTime @default(now())
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@index([userId])
+}
+
+model TeamAction {
+  id           String       @id @default(cuid())
+  teamId       String
+  actionType   ActionType
+  status       ActionStatus @default(PENDING)
+  requestedBy  String
+  targetUserId String?
+  targetRepoId String?
+  metadata     Json?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  resolvedAt   DateTime?
+  resolvedBy   String?
+  team         Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@index([teamId])
+  @@index([requestedBy])
+  @@index([status])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  link      String?
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, read])
+}
+
+model WebhookConfig {
+  id              String     @id @default(cuid())
+  repositoryId    String     @unique
+  enabled         Boolean    @default(false)
+  githubWebhookId Int?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  /// Optional numeric risk-score threshold (0–100). Reviews with riskScore >= this
+  /// value fail the GitHub branch-protection status check. NULL = use the default
+  /// heuristic (fail on any critical/high severity finding).
+  scoreThreshold  Int?
+  repository      Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@map("webhook_config")
+}
+
+model ScheduledScanConfig {
+  id           String             @id @default(cuid())
+  repositoryId String             @unique
+  enabled      Boolean            @default(false)
+  cadence      ScanCadence        @default(WEEKLY)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  repository   Repository         @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  runs         ScheduledScanRun[]
+
+  @@map("scheduled_scan_config")
+}
+
+model ScheduledScanRun {
+  id            String              @id @default(cuid())
+  configId      String
+  triggeredAt   DateTime            @default(now())
+  completedAt   DateTime?
+  status        ScanRunStatus       @default(RUNNING)
+  reviewsQueued Int                 @default(0)
+  summary       String?
+  config        ScheduledScanConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@index([configId])
+  @@map("scheduled_scan_run")
+}
+
+model GitHubComment {
+  id             String     @id @default(cuid())
+  reviewId       String     @unique
+  githubReviewId BigInt
+  prNumber       Int
+  repositoryId   String
+  commitSha      String
+  findingCount   Int        @default(0)
+  createdAt      DateTime   @default(now())
+  repository     Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  review         Review     @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId])
+  @@index([repositoryId, prNumber])
+  @@map("github_comment")
+}
+
+model GitHubStatusCheck {
+  id        String           @id @default(cuid())
+  reviewId  String           @unique
+  commitSha String
+  state     GitHubCheckState @default(PENDING)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  review    Review           @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@map("github_status_check")
+}
+
+model BranchProtectionRecommendation {
+  id           String                 @id @default(cuid())
+  repositoryId String
+  rule         String
+  rationale    String
+  priority     RecommendationPriority
+  dismissed    Boolean                @default(false)
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+  repository   Repository             @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@index([repositoryId])
+  @@map("branch_protection_recommendation")
+}
+
+model Diagram {
+  id           String        @id @default(cuid())
+  repositoryId String
+  type         DiagramType
+  status       DiagramStatus @default(PENDING)
+  definition   String?
+  nodes        Json?
+  edges        Json?
+  error        String?
+  generatedAt  DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  repository   Repository    @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@unique([repositoryId, type])
+  @@index([repositoryId])
+}
+
+model ReviewRule {
+  id           String       @id @default(cuid())
+  name         String
+  description  String
+  pattern      String?
+  severity     RuleSeverity @default(MEDIUM)
+  repositoryId String?
+  teamId       String?
+  enabled      Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  userId       String
+  repository   Repository?  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  team         Team?        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([repositoryId])
+  @@index([teamId])
+  @@map("review_rule")
+}
+
+model SystemSettings {
+  id                    String   @id @default("global")
+  maintenanceMode       Boolean  @default(false)
+  updatedAt             DateTime @updatedAt
+  auditLogRetentionDays Int      @default(0)
+  reviewRetentionDays   Int      @default(0)
+  sessionRetentionDays  Int      @default(0)
+  bannerColor           String   @default("indigo")
+  bannerEnabled         Boolean  @default(false)
+  bannerLink            String   @default("")
+  bannerLinkText        String   @default("")
+  bannerText            String   @default("")
+
+  @@map("system_settings")
+}
+
+model SupportMessage {
+  id        String   @id @default(cuid())
+  email     String?
+  message   String
+  status    String   @default("PENDING")
+  createdAt DateTime @default(now())
+  name      String?
+  subject   String?
+  type      String   @default("SUPPORT")
+  userId    String?
+
+  @@map("support_message")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  resource   String?
+  resourceId String?
+  ipAddress  String?
+  userAgent  String?
+  country    String?
+  city       String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  actor      User?    @relation(fields: [actorId], references: [id])
+
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_log")
+}
+
+model SsoProvider {
+  id             String   @id @default(cuid())
+  issuer         String
+  domain         String
+  oidcConfig     String?
+  samlConfig     String?
+  userId         String
+  providerId     String   @unique
+  organizationId String?
+  name           String
+  enabled        Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("sso_provider")
+}
+
+model CustomRole {
+  id                    String           @id @default(cuid())
+  name                  String           @unique
+  description           String?
+  canViewReviews        Boolean          @default(true)
+  canTriggerReviews     Boolean          @default(false)
+  canManageRepositories Boolean          @default(false)
+  canManageTeams        Boolean          @default(false)
+  canViewAnalytics      Boolean          @default(false)
+  canManageUsers        Boolean          @default(false)
+  canAccessAdmin        Boolean          @default(false)
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  userRoles             UserCustomRole[]
+
+  @@map("custom_role")
+}
+
+model UserCustomRole {
+  id         String     @id @default(cuid())
+  userId     String
+  roleId     String
+  assignedAt DateTime   @default(now())
+  role       CustomRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@map("user_custom_role")
+}
+
+/// Coupon / promo codes that grant a discount on any or a specific plan.
+model Discount {
+  id          String       @id @default(cuid())
+  code        String       @unique
+  description String?
+  type        DiscountType
+  /// Percentage (0-100) for PERCENTAGE; dollar amount for FIXED.
+  value       Float
+  /// Null = applies to all plans; "FREE" | "PRO" | "ENTERPRISE" = specific plan.
+  planId      String?
+  /// Null = unlimited uses.
+  maxUses     Int?
+  usedCount   Int          @default(0)
+  active      Boolean      @default(true)
+  expiresAt   DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([code])
+  @@index([active])
+  @@map("discount")
+}
+
+/// Per-email price overrides — grant a specific user a custom price on a plan.
+model UserPriceOverride {
+  id                   String    @id @default(cuid())
+  email                String
+  /// "FREE" | "PRO" | "ENTERPRISE"
+  planId               String
+  overrideMonthlyPrice Int?
+  overrideYearlyPrice  Float?
+  reason               String?
+  active               Boolean   @default(true)
+  expiresAt            DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@unique([email, planId])
+  @@index([email])
+  @@map("user_price_override")
+}
+
+model PartnerDomain {
+  id                   String    @id @default(cuid())
+  /// e.g. "acme.com" — stored lowercase, without the leading @
+  domain               String    @unique
+  companyName          String
+  /// "FREE" | "PRO" | "ENTERPRISE"
+  planId               String
+  overrideMonthlyPrice Int?
+  overrideYearlyPrice  Float?
+  /// Internal note visible only to admins
+  note                 String?
+  active               Boolean   @default(true)
+  expiresAt            DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([domain])
+  @@index([active])
+  @@map("partner_domain")
+}
+
+/// Editable plan definitions — prices, features, limits (id is "FREE" | "PRO" | "ENTERPRISE").
+model PricingPlan {
+  id           String   @id
+  name         String
+  tagline      String
+  monthlyPrice Int
+  visible      Boolean  @default(true)
+  highlight    Boolean  @default(false)
+  features     String[]
+  reposLimit   Int?
+  reviewsLimit Int?
+  seatsLimit   Int?
+  privateRepos Boolean  @default(false)
+  sortOrder    Int      @default(0)
+  accentColor  String   @default("indigo")
+  cta          String? /// custom CTA button label (falls back to a default)
+  badge        String? /// custom ribbon/badge label (e.g. "Most Popular")
+  updatedAt    DateTime @updatedAt
+
+  planCapabilities PlanCapability[]
+
+  @@map("pricing_plan")
+}
+
+/// Admin-managed capability catalog (feature flags). `key` is referenced by server enforcement hooks.
+model Capability {
+  id          String           @id @default(cuid())
+  key         String           @unique
+  label       String
+  description String?
+  kind        String           @default("display") /// "enforced" | "display"
+  sortOrder   Int              @default(0)
+  plans       PlanCapability[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@map("capability")
+}
+
+/// Per-plan enablement of a capability.
+model PlanCapability {
+  planId       String
+  capabilityId String
+  enabled      Boolean     @default(false)
+  plan         PricingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  capability   Capability  @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
+
+  @@id([planId, capabilityId])
+  @@map("plan_capability")
+}
+
+/// Single-row global pricing configuration (id is always "global").
+model PricingSettings {
+  id                   String   @id @default("global")
+  pricingEnabled       Boolean  @default(true)
+  annualDiscount       Int      @default(20)
+  trialDays            Int      @default(14)
+  trialPlan            String   @default("pro")
+  gracePeriodDays      Int      @default(3)
+  refundEnabled        Boolean  @default(true)
+  refundWindowDays     Int      @default(14)
+  taxEnabled           Boolean  @default(false)
+  taxRate              Float    @default(0)
+  promoCodesAtCheckout Boolean  @default(true)
+  freeSignupEnabled    Boolean  @default(true)
+  updatedAt            DateTime @updatedAt
+
+  @@map("pricing_settings")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum SecuritySeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum SecurityIssueType {
+  VULNERABILITY
+  SECRET_EXPOSURE
+  OWASP_TOP_10
+  CODE_QUALITY
+  CWE
+}
+
+enum ReviewStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ReviewApprovalState {
+  APPROVED
+  CHANGES_REQUESTED
+  COMMENTED
+}
+
+enum AssignmentPriority {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum AssignmentStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum TeamRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum ActionType {
+  INVITE_MEMBER
+  REMOVE_MEMBER
+  UPDATE_ROLE
+  SHARE_REPOSITORY
+  UNSHARE_REPOSITORY
+  DELETE_TEAM
+  REVIEW_PR
+  APPROVE_DISCUSSION
+}
+
+enum ActionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum NotificationType {
+  TEAM_INVITE
+  TEAM_MEMBER_ADDED
+  REVIEW_COMPLETED
+  REVIEW_FAILED
+  SCHEDULED_SCAN_COMPLETED
+  REVIEW_ASSIGNED
+  REVIEW_APPROVED
+  REVIEW_CHANGES_REQUESTED
+}
+
+enum ScanCadence {
+  DAILY
+  WEEKLY
+}
+
+enum ScanRunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum GitHubCheckState {
+  PENDING
+  SUCCESS
+  FAILURE
+  ERROR
+}
+
+enum RecommendationPriority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum DiagramType {
+  ERD
+}
+
+enum DiagramStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum RuleSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+model Invoice {
+  id                  String         @id @default(cuid())
+  userId              String
+  amount              Int
+  status              InvoiceStatus  @default(PENDING)
+  planId              String?
+  billingCycle        String? /// "monthly" | "yearly"
+  description         String?
+  fawaterakInvoiceId  Int?           @unique
+  fawaterakInvoiceKey String?
+  paymentMethodUsed   String? /// "Visa-Mastercard", "Fawry", etc.
+  referenceNumber     String? /// Fawry code, Aman code, etc.
+  successToken        String? /// Secret token to verify success redirect
+  currency            String         @default("EGP")
+  paidAt              DateTime?
+  createdAt           DateTime       @default(now())
+  /// Idempotency key supplied by client (UUID v4) — prevents duplicate charges.
+  idempotencyKey      String?        @unique
+  /// Optimistic concurrency version — every update must supply expected version.
+  version             Int            @default(1)
+  user                User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paymentEvents       PaymentEvent[]
+
+  @@index([userId])
+  @@index([fawaterakInvoiceId])
+  @@map("invoice")
+}
+
+enum InvoiceStatus {
+  PAID
+  PENDING
+  FAILED
+  REFUNDED
+  PROCESSING
+  AUTHORIZED
+  PARTIALLY_REFUNDED
+  DISPUTED
+  CANCELLED
+  INITIATED
+}
+
+/// Append-only payment ledger — never update, never delete.
+/// Every state transition appends a new row.
+model PaymentEvent {
+  id         String           @id @default(cuid())
+  invoiceId  String
+  eventType  PaymentEventType
+  source     String           @default("system") /// "fawaterak" | "stripe" | "system" | "admin"
+  metadata   Json?
+  rawPayload Json? /// Raw gateway payload stored verbatim for reconciliation
+  createdAt  DateTime         @default(now())
+  invoice    Invoice          @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@index([invoiceId, eventType])
+  @@index([createdAt])
+  @@map("payment_event")
+}
+
+enum PaymentEventType {
+  PAYMENT_INITIATED
+  PAYMENT_PROCESSING
+  PAYMENT_AUTHORIZED
+  PAYMENT_CAPTURED
+  PAYMENT_SUCCEEDED
+  PAYMENT_FAILED
+  REFUND_REQUESTED
+  REFUND_SUCCEEDED
+  REFUND_FAILED
+  DISPUTE_OPENED
+  DISPUTE_RESOLVED
+  PAYMENT_CANCELLED
+  CREDIT_APPLIED
+}
+
+/// Webhook idempotency table — prevents processing the same gateway event twice.
+model WebhookDedup {
+  id             String   @id @default(cuid())
+  gatewayEventId String   @unique /// Composite key: "{gateway}:{invoiceId}:{status}"
+  eventType      String
+  receivedAt     DateTime @default(now())
+
+  @@index([gatewayEventId])
+  @@map("webhook_dedup")
+}
+
+model UserDiscount {
+  id         String   @id @default(cuid())
+  userId     String
+  discountId String
+  appliedAt  DateTime @default(now())
+
+  @@unique([userId, discountId])
+  @@map("user_discount")
+}
+
+model BillingInfo {
+  id             String          @id @default(cuid())
+  userId         String          @unique
+  fullName       String
+  email          String
+  /// Egyptian mobile for Fawaterak (01xxxxxxxxx)
+  phone          String?
+  address        String?
+  city           String?
+  state          String?
+  zip            String?
+  country        String          @default("US")
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paymentMethods PaymentMethod[]
+
+  @@map("billing_info")
+}
+
+model PaymentMethod {
+  id                String      @id @default(cuid())
+  billingInfoId     String
+  cardBrand         String
+  lastFour          String      @db.VarChar(4)
+  expiryMonth       Int
+  expiryYear        Int
+  isDefault         Boolean     @default(false)
+  /// Encrypted card fingerprint for deduplication — never store full card numbers
+  fingerprint       String?
+  /// Fawaterak token used to charge this card
+  fawaterakToken    String?     @unique
+  /// Stable per-user ID sent to Fawaterak
+  customerUniqueId  String?
+  /// Returned by Fawaterak; needed to delete the token
+  cardTokenUniqueId String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  billingInfo       BillingInfo @relation(fields: [billingInfoId], references: [id], onDelete: Cascade)
+
+  @@index([billingInfoId])
+  @@index([customerUniqueId])
+  @@map("payment_method")
+}
+
+model LegalPage {
+  slug      String   @id
+  title     String
+  content   String   @db.Text
+  updatedAt DateTime @updatedAt
+}
+
+enum MessageCategory {
+  CONTACT
+  FEEDBACK
+  REVIEW_FEEDBACK
+  MAINTENANCE_FEEDBACK
+}
+
+model ContactMessage {
+  id        String          @id @default(cuid())
+  name      String
+  email     String
+  subject   String
+  message   String
+  category  MessageCategory @default(CONTACT)
+  resolved  Boolean         @default(false)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@map("contact_messages")
+}
+
+enum EmailTemplateCategory {
+  ONBOARDING
+  ANNOUNCEMENT
+  FEATURE
+  NEWSLETTER
+  TRANSACTIONAL
+  GENERAL
+}
+
+model EmailTemplate {
+  id          String                @id @default(cuid())
+  name        String
+  description String?
+  subject     String
+  body        String                @db.Text
+  category    EmailTemplateCategory @default(GENERAL)
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  @@map("email_template")
+}
